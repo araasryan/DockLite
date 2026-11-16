@@ -1,0 +1,16 @@
+# SwiftPM / build output
+.build/
+build/
+*.xcodeproj/
+.swiftpm/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Local environment / secrets (never commit)
+.env
+.env.*
+*.pem
+*.p12
+*.key
