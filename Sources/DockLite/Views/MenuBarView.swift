@@ -26,10 +26,8 @@ struct MenuBarContent: View {
                         Button("Stop") { store.stop(c) }
                         Button("Restart") { store.restart(c) }
                         Button("Open Shell") { store.openShell(c) }
-                        ForEach(c.publishedPorts.filter { $0.type == "tcp" }, id: \.self) { p in
-                            if let pub = p.publicPort, let url = URL(string: "http://localhost:\(pub)") {
-                                Button("Open localhost:\(pub)") { NSWorkspace.shared.open(url) }
-                            }
+                        ForEach(c.publishedPorts.filter { $0.url != nil }, id: \.self) { p in
+                            Button("Open localhost:" + String(p.publicPort ?? 0)) { NSWorkspace.shared.open(p.url!) }
                         }
                     } else {
                         Button("Start") { store.start(c) }

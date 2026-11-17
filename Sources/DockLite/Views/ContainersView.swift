@@ -166,13 +166,13 @@ struct ContainersView: View {
                     Label(allCollapsed ? "Expand all" : "Collapse all",
                           systemImage: allCollapsed ? "rectangle.expand.vertical" : "rectangle.compress.vertical")
                 }
-                .help(allCollapsed ? "Expand all groups" : "Collapse all groups")
+                .help(allCollapsed ? "Expand all groups (⇧⌘E)" : "Collapse all groups (⇧⌘E)")
                 .keyboardShortcut("e", modifiers: [.command, .shift])
                 .disabled(groups.isEmpty || !search.isEmpty)
                 Toggle(isOn: $showStopped) {
                     Label("Show stopped", systemImage: "eye")
                 }
-                .help("Show stopped containers")
+                .help(showStopped ? "Hide stopped containers" : "Show stopped containers")
                 Button {
                     store.pruneContainers()
                 } label: {
@@ -185,6 +185,7 @@ struct ContainersView: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .help("Refresh (⌘R)")
                 .keyboardShortcut("r")
             }
         }
@@ -259,56 +260,132 @@ struct ContainerRow: View {
     @Environment(Store.self) private var store
     let container: ContainerSummary
 
+    /// Picks the fullest layout that fits the row width: all ports, then one port + "+N",
+    /// then a ports menu, and finally drops the status text. Names always get priority.
     var body: some View {
-        let c = container
-        HStack(spacing: 10) {
-            Circle().fill(c.stateColor).frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(c.displayName).fontWeight(.medium).lineLimit(1)
-                Text(c.image).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-            }
-            Spacer(minLength: 12)
-            PortLinks(ports: c.publishedPorts)
-            Text(c.status).font(.caption).foregroundStyle(.secondary)
-                .lineLimit(1).frame(width: 150, alignment: .trailing)
-            Group {
-                if store.busy.contains(c.id) {
-                    ProgressView().controlSize(.small)
-                } else {
-                    HStack(spacing: 6) {
-                        if c.isRunning {
-                            Button { store.stop(c) } label: { Image(systemName: "stop.fill") }.help("Stop")
-                            Button { store.restart(c) } label: { Image(systemName: "arrow.clockwise") }.help("Restart")
-                        } else {
-                            Button { store.start(c) } label: { Image(systemName: "play.fill") }.help("Start")
-                            Button { store.pendingRemoval = c } label: { Image(systemName: "trash") }.help("Remove")
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                }
-            }
-            .frame(width: 52)
+        ViewThatFits(in: .horizontal) {
+            content(ports: .all, showStatus: true)
+            content(ports: .first, showStatus: true)
+            content(ports: .menu, showStatus: true)
+            content(ports: .menu, showStatus: false)
         }
         .padding(.vertical, 3)
+    }
+
+    private func content(ports mode: PortLinks.Mode, showStatus: Bool) -> some View {
+        let c = container
+        return HStack(spacing: 10) {
+            Circle().fill(c.stateColor).frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: c.displayName).fontWeight(.medium).lineLimit(1).truncationMode(.middle)
+                Text(verbatim: c.image).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            .help(c.name == c.displayName ? c.name : "\(c.name) (\(c.displayName))")
+            Spacer(minLength: 12)
+            PortLinks(ports: c.publishedPorts, mode: mode)
+            if showStatus {
+                Text(verbatim: c.status).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).fixedSize()
+                    .frame(minWidth: 80, alignment: .trailing)
+            }
+            actions(c).frame(width: 52)
+        }
+    }
+
+    @ViewBuilder
+    private func actions(_ c: ContainerSummary) -> some View {
+        if store.busy.contains(c.id) {
+            ProgressView().controlSize(.small)
+        } else {
+            HStack(spacing: 6) {
+                if c.isRunning {
+                    Button { store.stop(c) } label: { Image(systemName: "stop.fill") }.help("Stop")
+                    Button { store.restart(c) } label: { Image(systemName: "arrow.clockwise") }.help("Restart")
+                } else {
+                    Button { store.start(c) } label: { Image(systemName: "play.fill") }.help("Start")
+                    Button { store.pendingRemoval = c } label: { Image(systemName: "trash") }.help("Remove")
+                }
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+}
+
+extension PortBinding {
+    /// "8080→80", "6379", "1434→1434/udp". Built as a plain String so SwiftUI never applies
+    /// locale digit grouping (which turned 10000 into "10 000" and made labels wrap).
+    var label: String {
+        guard let pub = publicPort else { return "" }
+        let base = pub == privatePort ? String(pub) : String(pub) + "→" + String(privatePort)
+        return type == "tcp" ? base : base + "/" + type
+    }
+
+    var url: URL? {
+        guard type == "tcp", let pub = publicPort else { return nil }
+        return URL(string: "http://localhost:" + String(pub))
     }
 }
 
 struct PortLinks: View {
+    enum Mode { case all, first, menu }
+
     let ports: [PortBinding]
+    var mode: Mode = .all
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(ports.prefix(3), id: \.self) { p in
-                if let pub = p.publicPort, p.type == "tcp", let url = URL(string: "http://localhost:\(pub)") {
-                    Link("\(pub)→\(p.privatePort)", destination: url)
-                        .font(.caption.monospacedDigit())
-                        .help("Open http://localhost:\(pub)")
-                } else if let pub = p.publicPort {
-                    Text("\(pub)→\(p.privatePort)/\(p.type)").font(.caption.monospacedDigit())
+        if ports.isEmpty {
+            EmptyView()
+        } else {
+            switch mode {
+            case .all:
+                HStack(spacing: 8) { ForEach(ports, id: \.self, content: link) }
+            case .first:
+                HStack(spacing: 6) {
+                    link(ports[0])
+                    if ports.count > 1 { more(ports.count - 1) }
+                }
+            case .menu:
+                more(ports.count, icon: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func link(_ p: PortBinding) -> some View {
+        if let url = p.url {
+            Link(destination: url) { Text(verbatim: p.label) }
+                .font(.caption.monospacedDigit())
+                .lineLimit(1).fixedSize()
+                .help("Open " + url.absoluteString)
+        } else {
+            Text(verbatim: p.label)
+                .font(.caption.monospacedDigit())
+                .lineLimit(1).fixedSize()
+        }
+    }
+
+    /// Compact menu listing every port, used when there isn't room to show them inline.
+    private func more(_ n: Int, icon: Bool = false) -> some View {
+        Menu {
+            ForEach(ports, id: \.self) { p in
+                if let url = p.url {
+                    Button("Open " + p.label) { NSWorkspace.shared.open(url) }
+                } else {
+                    Text(verbatim: p.label)
                 }
             }
-            if ports.count > 3 { Text("+\(ports.count - 3)").font(.caption).foregroundStyle(.secondary) }
+        } label: {
+            if icon {
+                Label(String(n) + (n == 1 ? " port" : " ports"), systemImage: "network")
+            } else {
+                Text(verbatim: "+" + String(n))
+            }
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .font(.caption)
+        .fixedSize()
+        .help(ports.map(\.label).joined(separator: ", "))
     }
 }
 
@@ -453,7 +530,15 @@ struct ContainerDetail: View {
                         }
                     }
                     if !c.publishedPorts.isEmpty {
-                        GridRow { Text("Ports").foregroundStyle(.secondary); PortLinks(ports: c.publishedPorts) }
+                        GridRow {
+                            Text("Ports").foregroundStyle(.secondary)
+                            ViewThatFits(in: .horizontal) {
+                                PortLinks(ports: c.publishedPorts)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    ForEach(c.publishedPorts, id: \.self) { PortLinks(ports: [$0]) }
+                                }
+                            }
+                        }
                     }
                 }
                 .font(.callout)

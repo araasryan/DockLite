@@ -105,6 +105,7 @@ struct ImagesView: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .help("Refresh (⌘R)")
                 .keyboardShortcut("r")
             }
         }

@@ -20,8 +20,8 @@ struct LogsView: View {
                 Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary)
                 TextField("Filter logs", text: $filter).textFieldStyle(.plain)
                 Toggle("Follow", isOn: $follow).toggleStyle(.checkbox).controlSize(.small)
-                Button { copyAll() } label: { Image(systemName: "doc.on.doc") }.help("Copy visible logs")
-                Button { logs.clear() } label: { Image(systemName: "clear") }.help("Clear")
+                Button { copyAll() } label: { Image(systemName: "doc.on.doc") }.help("Copy the visible log lines")
+                Button { logs.clear() } label: { Image(systemName: "clear") }.help("Clear the log view (the container's logs are not deleted)")
             }
             .buttonStyle(.borderless)
             .padding(.horizontal, 12).padding(.vertical, 7)

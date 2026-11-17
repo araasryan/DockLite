@@ -98,6 +98,7 @@ struct EngineStatus: View {
                 } label: {
                     Image(systemName: "gearshape")
                 }
+                .help("Docker socket, Colima and Settings")
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
