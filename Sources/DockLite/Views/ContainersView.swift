@@ -91,33 +91,26 @@ struct ContainersView: View {
                                        description: Text("Run one with docker run or docker compose up."))
             } else {
                 List(selection: $selection) {
+                    // Groups are ordinary (unselectable) rows rather than section headers, so collapsed
+                    // groups don't leave section gaps and headers aren't dimmed. Like Docker Desktop.
                     ForEach(groups) { group in
-                        Section {
-                            if isExpanded(group) {
-                                ForEach(group.containers) { c in
-                                    ContainerRow(container: c).tag(c.id)
+                        GroupHeader(group: group, expanded: isExpanded(group)) { toggle(group) }
+                            .contextMenu {
+                                if group.kind == .custom {
+                                    Button("Rename Group…") { startRename(group.title) }
+                                    Button("Ungroup") { store.ungroup(group.title) }
+                                } else {
+                                    Button("Move All to New Group…") { startNewGroup(group.containers) }
                                 }
                             }
-                        } header: {
-                            GroupHeader(group: group, expanded: isExpanded(group)) { toggle(group) }
-                                .contextMenu {
-                                    if group.kind == .custom {
-                                        Button("Rename Group…") { startRename(group.title) }
-                                        Button("Ungroup") { store.ungroup(group.title) }
-                                    } else {
-                                        Button("Move All to New Group…") { startNewGroup(group.containers) }
-                                    }
-                                }
+                        if isExpanded(group) {
+                            ForEach(group.containers) { c in
+                                ContainerRow(container: c, indented: true, selected: selection.contains(c.id)).tag(c.id)
+                            }
                         }
                     }
-                    if !ungrouped.isEmpty {
-                        Section {
-                            ForEach(ungrouped) { c in
-                                ContainerRow(container: c).tag(c.id)
-                            }
-                        } header: {
-                            if !groups.isEmpty { Divider().padding(.vertical, 4) }
-                        }
+                    ForEach(ungrouped) { c in
+                        ContainerRow(container: c, selected: selection.contains(c.id)).tag(c.id)
                     }
                 }
                 .listStyle(.inset)
@@ -212,53 +205,86 @@ struct GroupHeader: View {
     let expanded: Bool
     let onToggle: () -> Void
 
+    private var kindLabel: String {
+        switch group.kind {
+        case .compose: "Compose"
+        case .aspire: "Aspire"
+        case .custom: "Group"
+        }
+    }
+
     var body: some View {
-        let running = group.containers.filter(\.isRunning).count
-        HStack(spacing: 8) {
-            HStack(spacing: 6) {
+        let running = group.containers.filter(\.isRunning)
+        let total = group.containers.count
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
                     .rotationEffect(.degrees(expanded ? 90 : 0))
-                    .frame(width: 12)
-                Image(systemName: group.kind == .custom ? "folder" : "square.stack.3d.down.right")
-                    .foregroundStyle(.secondary)
-                Text(group.title).font(.headline)
-                Text(group.kind == .compose ? "Compose" : group.kind == .aspire ? "Aspire" : "Group")
-                    .font(.caption2.weight(.medium))
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(.quaternary, in: Capsule())
-                    .foregroundStyle(.secondary)
-                Text("\(running)/\(group.containers.count) running").font(.caption).foregroundStyle(.secondary)
-                if !expanded {
-                    // Compact status summary while collapsed.
-                    HStack(spacing: 3) {
-                        ForEach(group.containers.prefix(16)) { c in
-                            Circle().fill(c.stateColor).frame(width: 6, height: 6).help("\(c.displayName): \(c.state)")
+                    .frame(width: 10)
+                Image(systemName: group.kind == .custom ? "folder.fill" : "square.stack.3d.up.fill")
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(verbatim: group.title).fontWeight(.semibold).lineLimit(1)
+                        Text(kindLabel)
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(.quaternary, in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 6) {
+                        Text("\(running.count) of \(total) running")
+                        // Status summary: one dot per container (capped), handy when collapsed.
+                        HStack(spacing: 3) {
+                            ForEach(group.containers.prefix(10)) { c in
+                                Circle().fill(c.stateColor).frame(width: 6, height: 6)
+                                    .help("\(c.displayName): \(c.state)")
+                            }
+                            if total > 10 { Text(verbatim: "+" + String(total - 10)) }
                         }
                     }
-                    .padding(.leading, 4)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
-                Spacer()
+                Spacer(minLength: 12)
             }
             .contentShape(Rectangle())
             .onTapGesture(perform: onToggle)
+            .pointingHandCursor()
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel("\(group.title), \(expanded ? "expanded" : "collapsed")")
-            if running > 0 {
-                Button("Stop all") { store.stopAll(group.containers) }
-            } else {
-                Button("Start all") { store.startAll(group.containers) }
+            .help(expanded ? "Collapse \(group.title)" : "Expand \(group.title)")
+
+            // Same column and width as each container row's actions.
+            HStack(spacing: 6) {
+                if !running.isEmpty {
+                    Button { store.stopAll(group.containers) } label: { Image(systemName: "stop.fill") }
+                        .help("Stop all containers in \(group.title)")
+                    Button { running.forEach(store.restart) } label: { Image(systemName: "arrow.clockwise") }
+                        .help("Restart running containers in \(group.title)")
+                } else {
+                    Button { store.startAll(group.containers) } label: { Image(systemName: "play.fill") }
+                        .help("Start all containers in \(group.title)")
+                }
             }
+            .buttonStyle(.borderless)
+            .frame(width: 52)
         }
-        .buttonStyle(.borderless)
-        .font(.caption)
+        .padding(.vertical, 5)
+        .hoverHighlight()
     }
 }
 
 struct ContainerRow: View {
     @Environment(Store.self) private var store
     let container: ContainerSummary
+    /// Rows inside a group are indented under the group's chevron.
+    var indented = false
+    /// Selected rows already have the system highlight, so they get no hover tint.
+    var selected = false
 
     /// Picks the fullest layout that fits the row width: all ports, then one port + "+N",
     /// then a ports menu, and finally drops the status text. Names always get priority.
@@ -270,6 +296,8 @@ struct ContainerRow: View {
             content(ports: .menu, showStatus: false)
         }
         .padding(.vertical, 3)
+        .padding(.leading, indented ? 22 : 0)
+        .hoverHighlight(enabled: !selected)
     }
 
     private func content(ports mode: PortLinks.Mode, showStatus: Bool) -> some View {
@@ -562,4 +590,46 @@ struct ContainerDetail: View {
             LogsView(containerID: c.id, isRunning: c.isRunning)
         }
     }
+}
+
+// MARK: - Hover feedback
+
+private struct HoverHighlight: ViewModifier {
+    var enabled: Bool
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            // Extend the tint a little past the content so it reads as a row, not a box around text.
+            .padding(.horizontal, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.primary.opacity(hovering && enabled ? 0.07 : 0))
+            )
+            .padding(.horizontal, -6)
+            .onHover { inside in
+                withAnimation(.easeOut(duration: 0.12)) { hovering = inside }
+            }
+    }
+}
+
+private struct PointingHandCursor: ViewModifier {
+    @State private var pushed = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                if inside, !pushed { NSCursor.pointingHand.push(); pushed = true }
+                else if !inside, pushed { NSCursor.pop(); pushed = false }
+            }
+            // If the row scrolls away or collapses under the pointer, don't leave the cursor stuck.
+            .onDisappear { if pushed { NSCursor.pop(); pushed = false } }
+    }
+}
+
+extension View {
+    /// Subtle rounded tint while the pointer is over the view.
+    func hoverHighlight(enabled: Bool = true) -> some View { modifier(HoverHighlight(enabled: enabled)) }
+    /// Pointing-hand cursor for custom clickable areas.
+    func pointingHandCursor() -> some View { modifier(PointingHandCursor()) }
 }
